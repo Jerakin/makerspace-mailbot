@@ -69,7 +69,7 @@ def read_email(service, msg_id):
             temp_dict['From'] = h['value']
     if 'NO-REPLY@simplybook.me' not in temp_dict['From'] and 'Confirmation of cancellation' not in temp_dict['Subject']:
         return
-    msg_body =_parse_payload(payload)
+    msg_body = _parse_payload(payload)
     match = BODY_REGEXP.search(msg_body)
     if match:
         return {"area": match.group(1), "date": match.group(2), "time": match.group(3)}

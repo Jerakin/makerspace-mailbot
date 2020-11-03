@@ -7,6 +7,7 @@ import asyncio
 import discord
 from discord.ext import commands
 from dotenv import load_dotenv
+from discord.ext import tasks
 
 try:
     from . import gmail
@@ -20,92 +21,85 @@ load_dotenv()
 
 TOKEN = os.getenv('DISCORD_TOKEN')
 
-bot = commands.Bot(command_prefix='!')
+class MakerBot(discord.Client):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.SESSION = dict()
+        if os.path.exists('session.json'):
+            with open('session.json', 'r') as fp:
+                d = json.load(fp)
+                self.SESSION['discord'] = d['discord']
+        else:
+            self.SESSION['discord'] = {"modmail": {"listeners": {}}, "cancelled": {"listeners": {}}}
 
-# Hold the guilds and channels that the message writes in
-# TODO: Save to disk
-SESSION = {}
+        self.gmail_session = gmail.login()
+        self.one_session = one.login()
 
+        self.cancelled_sessions_alert.start()
+        self.mod_mail_alert.start()
 
-@bot.event
-async def on_ready():
-    await bot.change_presence(activity=discord.Activity(type=discord.ActivityType.watching, name="the Mailbox"))
+    async def on_ready(self):
+        await self.change_presence(activity=discord.Activity(type=discord.ActivityType.watching, name="the Mailbox"))
 
+    @tasks.loop(minutes=15.0)
+    async def cancelled_sessions_alert(self):
+        await self.wait_until_ready()
+        messages = gmail.check_mail_for_cancelled(self.gmail_session, self.get_time('cancelled'))
+        await self.alert(messages, 'cancelled')
 
-async def register(ctx, arg, scope, name):
-    listeners = SESSION["discord"][scope]["listeners"]
-    if arg == "start":
-        if ctx.guild.id not in listeners:
-            listeners[ctx.guild.id] = []
-        if ctx.channel.id not in listeners[ctx.guild.id]:
-            listeners[ctx.guild.id].append(ctx.channel.id)
-            await ctx.send(f"MailMan '{name}' activated")
-    elif arg == "stop":
-        if ctx.guild.id in listeners and ctx.channel.id in listeners[ctx.guild.id]:
-            listeners[ctx.guild.id].remove(ctx.channel.id)
-            await ctx.send(f"MailMan '{name}' deactivated")
+    @tasks.loop(minutes=15.0)
+    async def mod_mail_alert(self):
+        await self.wait_until_ready()
+        messages = one.check_mail_for_new(self.one_session, self.get_time('modmail'))
+        await self.alert(messages, 'modmail')
 
+    @mod_mail_alert.after_loop
+    @cancelled_sessions_alert.after_loop
+    async def save_session(self):
+        await self.wait_until_ready()
+        with open('session.json', 'w') as fp:
+            json.dump(self.SESSION, fp)
 
-@bot.command(name="cancelled")
-# @commands.has_role('admin')
-async def mailman(ctx, arg):
-    await register(ctx, arg, 'cancelled', 'Cancelled Sessions')
+    async def alert(self, messages, scope):
+        for guild in self.SESSION['discord'][scope]['listeners']:
+            for channel in self.SESSION['discord'][scope]['listeners'][guild]:
+                for message in messages:
+                    await self.get_channel(int(channel)).send(message)
+            self.SESSION['discord'][scope]['last_request'] = int(time.time())
 
+    async def on_message(self, message):
+        command, *msg = message.content.split(" ")
+        if command.startswith("!cancelled"):
+            await self.register(message, " ".join(msg), 'cancelled', 'Cancelled Sessions')
+        elif command.startswith("!modmail"):
+            await self.register(message, " ".join(msg), 'modmail', 'Cancelled Sessions')
+        elif command.startswith("!mailman"):
+            await message.channel.send(f"Hi there!")
 
-@bot.command(name="modmail")
-# @commands.has_role('admin')
-async def mailman(ctx, arg):
-    await register(ctx, arg, 'modmail', 'Mod Mail')
+    async def register(self, message, arg, scope, name):
+        listeners = self.SESSION["discord"][scope]["listeners"]
+        guild = str(message.guild.id)
+        channel = str(message.channel.id)
+        if arg == "start":
+            if guild not in listeners:
+                listeners[guild] = []
+            if channel not in listeners[guild]:
+                listeners[guild].append(channel)
+                await message.channel.send(f"MailMan '{name}' activated")
+        elif arg == "stop":
+            if guild in listeners and channel in listeners[guild]:
+                listeners[guild].remove(channel)
+                await message.channel.send(f"MailMan '{name}' deactivated")
 
-
-async def alert(messages, scope):
-    for guild in SESSION['discord'][scope]['listeners']:
-        for channel in SESSION['discord'][scope]['listeners'][guild]:
-            for message in messages:
-                await bot.get_guild(int(guild)).get_channel(int(channel)).send(message)
-        SESSION['discord'][scope]['last_request'] = int(time.time())
-
-
-def get_time(scope):
-    if 'last_request' in SESSION['discord'][scope]:
-        return SESSION['discord'][scope]['last_request']
-    return int(time.time()) - (7 * 24 * 60 * 60)
-
-
-async def cancelled_sessions_alert(service):
-    await bot.wait_until_ready()
-    messages = gmail.check_mail_for_cancelled(service, get_time('cancelled'))
-    await alert(messages, 'cancelled')
-    await asyncio.sleep(60 * 15)
-
-
-async def mod_mail_alert(imap):
-    await bot.wait_until_ready()
-    messages = one.check_mail_for_new(imap, get_time('modmail'))
-    await alert(messages, 'modmail')
-    await asyncio.sleep(60 * 15)
-
-
-async def save_session():
-    await bot.wait_until_ready()
-    with open('session.json', 'w') as fp:
-        json.dump(SESSION, fp)
-    await asyncio.sleep(60 * 10)
+    def get_time(self, scope):
+        if 'last_request' in self.SESSION['discord'][scope]:
+            return self.SESSION['discord'][scope]['last_request']
+        return int(time.time()) - (7 * 24 * 60 * 60)
 
 
 def main():
-    if os.path.exists('session.json'):
-        with open('session.json', 'r') as fp:
-            d = json.load(fp)
-            SESSION['discord'] = d['discord']
-    else:
-        SESSION['discord'] = {"modmail": {"listeners": {}}, "cancelled": {"listeners": {}}}
-    service = gmail.login()
-    imap = one.login()
-    bot.loop.create_task(mod_mail_alert(imap))
-    bot.loop.create_task(cancelled_sessions_alert(service))
-    bot.loop.create_task(save_session())
-    bot.run(TOKEN)
+    client = MakerBot()
+    client.run(TOKEN)
 
 
 if __name__ == '__main__':
