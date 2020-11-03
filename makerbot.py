@@ -72,7 +72,7 @@ class MakerBot(discord.Client):
         if command.startswith("!cancelled"):
             await self.register(message, " ".join(msg), 'cancelled', 'Cancelled Sessions')
         elif command.startswith("!modmail"):
-            await self.register(message, " ".join(msg), 'modmail', 'Cancelled Sessions')
+            await self.register(message, " ".join(msg), 'modmail', 'Info Mail')
         elif command.startswith("!mailman"):
             await message.channel.send(f"Hi there!")
 
