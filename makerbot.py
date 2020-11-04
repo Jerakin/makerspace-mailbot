@@ -3,9 +3,7 @@ import os.path
 import json
 import time
 
-import asyncio
 import discord
-from discord.ext import commands
 from dotenv import load_dotenv
 from discord.ext import tasks
 
@@ -20,6 +18,7 @@ except ImportError:
 load_dotenv()
 
 TOKEN = os.getenv('DISCORD_TOKEN')
+
 
 class MakerBot(discord.Client):
     def __init__(self, *args, **kwargs):
@@ -37,6 +36,9 @@ class MakerBot(discord.Client):
 
         self.cancelled_sessions_alert.start()
         self.mod_mail_alert.start()
+
+    async def on_error(self, event_method, *args, **kwargs):
+        await self.change_presence(activity=discord.Activity(type=discord.ActivityType.unknown, name="I crashed :("))
 
     async def on_ready(self):
         await self.change_presence(activity=discord.Activity(type=discord.ActivityType.watching, name="the Mailbox"))

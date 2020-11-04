@@ -1,21 +1,13 @@
 import os
-import os.path
-import json
 import time
-
-import asyncio
-import discord
-from discord.ext import commands
-from dotenv import load_dotenv
-from bs4 import BeautifulSoup
-
-
+import re
 import imaplib
 import email
 from email.utils import parsedate_tz, mktime_tz
-from email.header import decode_header
-import webbrowser
-import os
+
+from dotenv import load_dotenv
+from email_reply_parser import EmailReplyParser
+
 
 # Load the environment variables
 load_dotenv()
@@ -66,9 +58,25 @@ def _parse_mail(response, last_request):
             body = _get_body(part)
             if body:
                 bodies.append(body)
-        return True, subject, "\n".join(bodies)
+                break
+        body = "\n".join(bodies)
     else:
-        return True, subject, _get_body(msg)
+        body = _get_body(msg)
+
+    if body:
+        # Remove replied to emails
+        body = EmailReplyParser.parse_reply(body)
+
+        # Remove hyperlinks
+        body = re.sub(r'http\S+', '<REDACTED URL>', body, flags=re.MULTILINE)
+
+        # Limit body max amount of characters
+        body = body[:min(len(body), 1800)]
+
+        # Add divider
+        body = body + "\n" + "="*40
+        return True, subject, body
+    return False, "", ""
 
 
 def format_msg(subject, body):
