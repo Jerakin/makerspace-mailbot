@@ -85,7 +85,7 @@ def format_msg(subject, body):
 
 def check_mail_for_new(imap, last_request):
     mail_to_check = 10
-    status, messages = imap.select("INBOX")
+    status, messages = imap.select("INBOX", readonly=True)
     messages = int(messages[0])
     for i in range(messages, messages-mail_to_check, -1):
         # fetch the email message by ID
