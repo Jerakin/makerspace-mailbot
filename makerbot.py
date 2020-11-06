@@ -5,7 +5,7 @@ import time
 
 import discord
 from dotenv import load_dotenv
-from discord.ext import tasks
+from discord.ext import tasks, commands
 
 try:
     from . import gmail
@@ -34,8 +34,9 @@ class MakerBot(discord.Client):
         self.gmail_session = gmail.login()
         self.one_session = one.login()
 
-        self.cancelled_sessions_alert.start()
-        self.mod_mail_alert.start()
+        self.GMAIL_DATA = gmail.Data()
+
+        self.cancelled_sessions_job.start()
 
     async def on_error(self, event_method, *args, **kwargs):
         await self.change_presence(activity=discord.Activity(type=discord.ActivityType.unknown, name="I crashed :("))
@@ -43,32 +44,59 @@ class MakerBot(discord.Client):
     async def on_ready(self):
         await self.change_presence(activity=discord.Activity(type=discord.ActivityType.watching, name="the Mailbox"))
 
-    @tasks.loop(minutes=15.0)
-    async def cancelled_sessions_alert(self):
+    @tasks.loop(minutes=5.0)
+    async def cancelled_sessions_job(self):
         await self.wait_until_ready()
-        messages = gmail.check_mail_for_cancelled(self.gmail_session, self.get_time('cancelled'))
-        await self.alert(messages, 'cancelled')
+        for mail in gmail.check_mail(self.gmail_session, self.get_time('cancelled')):
+            if mail["type"] == "cancel":
+                messages = await self.alert(f"Appointment for {mail['area']} on {mail['date']} at {mail['time']} has been cancelled.", 'cancelled')
+                entry = gmail.Entry(mail, messages)
+                self.GMAIL_DATA.add(entry)
+            elif mail["type"] == "book":
+                messages = self.GMAIL_DATA.get_mail(mail)
+                if not messages:
+                    continue
+                deleted = []
+                for message in messages[::-1]:
+                    if message.id in deleted:
+                        continue
+                    await message.delete()
+                    self.GMAIL_DATA.remove(message)
+                    deleted.append(message.id)
 
-    @tasks.loop(minutes=15.0)
+    @tasks.loop(minutes=10.0)
     async def mod_mail_alert(self):
         await self.wait_until_ready()
         messages = one.check_mail_for_new(self.one_session, self.get_time('modmail'))
         await self.alert(messages, 'modmail')
 
+    @tasks.loop(minutes=50.0)
+    async def refresh_sessions(self):
+        self.gmail_session.close()
+        self.gmail_session.logout()
+        self.gmail_session = gmail.login()
+
+        self.one_session.close()
+        self.one_session.logout()
+        self.one_session = one.login()
+
     @mod_mail_alert.after_loop
-    @cancelled_sessions_alert.after_loop
+    @cancelled_sessions_job.after_loop
     async def save_session(self):
         await self.wait_until_ready()
         with open('session.json', 'w') as fp:
             json.dump(self.SESSION, fp)
 
-    async def alert(self, messages, scope):
+    async def alert(self, message, scope):
+        sent = []
         for guild in self.SESSION['discord'][scope]['listeners']:
             for channel in self.SESSION['discord'][scope]['listeners'][guild]:
-                for message in messages:
-                    await self.get_channel(int(channel)).send(message)
+                msg = await self.get_channel(int(channel)).send(message)
+                sent.append(msg)
             self.SESSION['discord'][scope]['last_request'] = int(time.time())
+        return sent
 
+    @commands.has_permissions(administrator=True)
     async def on_message(self, message):
         command, *msg = message.content.split(" ")
         if command.startswith("!cancelled"):
@@ -96,7 +124,7 @@ class MakerBot(discord.Client):
     def get_time(self, scope):
         if 'last_request' in self.SESSION['discord'][scope]:
             return self.SESSION['discord'][scope]['last_request']
-        return int(time.time()) - (7 * 24 * 60 * 60)
+        return int(time.time()) - (14 * 24 * 60 * 60)
 
 
 def main():

@@ -10,7 +10,40 @@ from google_auth_oauthlib.flow import InstalledAppFlow
 from google.auth.transport.requests import Request
 
 SCOPES = ['https://www.googleapis.com/auth/gmail.readonly']
-BODY_REGEXP = re.compile('Appointment for (.*) on ([0-9\-]*) at (\d\d:\d\d) has been cancelled')
+CANCEL_BODY_REGEXP = re.compile('Appointment for (.*) on ([0-9\-]*) at (\d\d:\d\d) has been cancelled')
+BOOK_BODY_REGEXP = re.compile('for (.*) at ([0-9\-]*) (\d\d:\d\d)')
+
+
+class Entry:
+    def __init__(self, msg, messages):
+        self.date = msg['date']
+        self.area = msg['area']
+        self.time = msg['time']
+        self.messages = messages
+
+
+class Data:
+    def __init__(self):
+        self._data = []
+
+    def add(self, entry):
+        self._data.append(entry)
+
+    def __getitem__(self, item):
+        return self._data[item]
+
+    def remove(self, msg):
+        for entry in self._data:
+            if msg in entry.messages:
+                entry.messages.remove(msg)
+
+    def get_mail(self, entry):
+        date = entry["date"]
+        area = entry["area"]
+        time = entry["time"]
+        for x in self._data:
+            if date == x.date and area == x.area and time == x.time:
+                return x.messages
 
 
 def login():
@@ -41,6 +74,8 @@ def _parse_payload(payload):
     email_parts = payload['parts']  # fetching the message parts
     part_one = email_parts[0]  # fetching first element of the part
     part_body = part_one['body']  # fetching body of the message
+    if 'parts' in part_one:
+        part_body = part_one['parts'][0]['body']
     if 'data' not in part_body:
         return ""
     part_data = part_body['data']  # fetching data from the body
@@ -67,12 +102,17 @@ def read_email(service, msg_id):
             temp_dict['Subject'] = h['value']
         if h['name'] == "From":
             temp_dict['From'] = h['value']
-    if 'NO-REPLY@simplybook.me' not in temp_dict['From'] and 'Confirmation of cancellation' not in temp_dict['Subject']:
+    if 'NO-REPLY@simplybook.me' not in temp_dict['From']:
         return
     msg_body = _parse_payload(payload)
-    match = BODY_REGEXP.search(msg_body)
-    if match:
-        return {"area": match.group(1), "date": match.group(2), "time": match.group(3)}
+    if 'Confirmation of cancellation' in temp_dict['Subject']:
+        match = CANCEL_BODY_REGEXP.search(msg_body)
+        if match:
+            return {"area": match.group(1), "date": match.group(2), "time": match.group(3), "type": "cancel"}
+    if 'has booked an appointment with' in temp_dict['Subject']:
+        match = BOOK_BODY_REGEXP.search(msg_body)
+        if match:
+            return {"area": match.group(1), "date": match.group(2), "time": match.group(3), "type": "book"}
 
 
 def get_emails(service, last_request):
@@ -85,8 +125,8 @@ def get_emails(service, last_request):
     return messages
 
 
-def check_mail_for_cancelled(service, last_request):
-    for mail in get_emails(service, last_request):
+def check_mail(service, last_request):
+    for mail in get_emails(service, last_request)[::-1]:
         data = read_email(service, mail['id'])
         if data:
-            yield f"Appointment for {data['area']} on {data['date']} at {data['time']} has been cancelled."
+            yield data
