@@ -6,6 +6,7 @@ import time
 import discord
 from dotenv import load_dotenv
 from discord.ext import tasks, commands
+from discord.commands import slash_command, Option, permissions
 
 try:
     from . import gmail
@@ -13,6 +14,14 @@ try:
 except ImportError:
     import gmail
     import one
+
+import logging
+
+logger = logging.getLogger('makerbot')
+logger.setLevel(logging.DEBUG)
+handler = logging.FileHandler(filename='discord.log', encoding='utf-8', mode='w')
+handler.setFormatter(logging.Formatter('%(asctime)s:%(levelname)s:%(name)s: %(message)s'))
+logger.addHandler(handler)
 
 # Load the environment variables
 load_dotenv()
@@ -24,6 +33,7 @@ class MakerBot(discord.Client):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.SESSION = dict()
+        logger.debug(f"New Sessions: {os.path.exists('session.json')}")
         if os.path.exists('session.json'):
             with open('session.json', 'r') as fp:
                 d = json.load(fp)
@@ -39,13 +49,19 @@ class MakerBot(discord.Client):
         self.cancelled_sessions_job.start()
 
     async def on_error(self, event_method, *args, **kwargs):
+        logger.error(f"Crash: {event_method}")
         await self.change_presence(activity=discord.Activity(type=discord.ActivityType.unknown, name="I crashed :("))
 
     async def on_ready(self):
+        logger.debug(f"Ready: {__name__}")
         await self.change_presence(activity=discord.Activity(type=discord.ActivityType.watching, name="the Mailbox"))
 
     @tasks.loop(minutes=5.0)
     async def cancelled_sessions_job(self):
+        logger.debug(f"Running cancellation check job: {self.gmail_session is not None}")
+        if self.gmail_session is None:
+            return
+
         await self.wait_until_ready()
         for mail in gmail.check_mail(self.gmail_session, self.get_time('cancelled')):
             if mail["type"] == "cancel":
@@ -66,19 +82,23 @@ class MakerBot(discord.Client):
 
     @tasks.loop(minutes=10.0)
     async def mod_mail_alert(self):
-        await self.wait_until_ready()
-        messages = one.check_mail_for_new(self.one_session, self.get_time('modmail'))
-        await self.alert(messages, 'modmail')
+        logger.debug(f"Running mod mail check job: {self.one_session is not None}")
+        if self.one_session:
+            await self.wait_until_ready()
+            messages = one.check_mail_for_new(self.one_session, self.get_time('modmail'))
+            await self.alert(messages, 'modmail')
 
     @tasks.loop(minutes=50.0)
     async def refresh_sessions(self):
-        self.gmail_session.close()
-        self.gmail_session.logout()
-        self.gmail_session = gmail.login()
-
-        self.one_session.close()
-        self.one_session.logout()
-        self.one_session = one.login()
+        logger.debug(f"Refreshing Sessions")
+        if self.gmail_session:
+            self.gmail_session.close()
+            self.gmail_session.logout()
+            self.gmail_session = gmail.login()
+        if self.one_session:
+            self.one_session.close()
+            self.one_session.logout()
+            self.one_session = one.login()
 
     @mod_mail_alert.after_loop
     @cancelled_sessions_job.after_loop
@@ -96,17 +116,25 @@ class MakerBot(discord.Client):
             self.SESSION['discord'][scope]['last_request'] = int(time.time())
         return sent
 
+    @slash_command()
+    @permissions.has_role("admin")
+    async def register(self, ctx: discord.ApplicationContext,
+                       feature: Option(str, "What to register for", choices=["Cancellation", "Modmail"]),
+                       value: Option(str, "Register or Unregister", choices=["start", "stop"])):
+
+        await self._register(ctx, value, feature, value)
+
     @commands.has_permissions(administrator=True)
     async def on_message(self, message):
         command, *msg = message.content.split(" ")
         if command.startswith("!cancelled"):
-            await self.register(message, " ".join(msg), 'cancelled', 'Cancelled Sessions')
+            await self._register(message, " ".join(msg), 'cancelled', 'Cancelled Sessions')
         elif command.startswith("!modmail"):
-            await self.register(message, " ".join(msg), 'modmail', 'Info Mail')
+            await self._register(message, " ".join(msg), 'modmail', 'Info Mail')
         elif command.startswith("!mailman"):
             await message.channel.send(f"Hi there!")
 
-    async def register(self, message, arg, scope, name):
+    async def _register(self, message, arg, scope, name):
         listeners = self.SESSION["discord"][scope]["listeners"]
         guild = str(message.guild.id)
         channel = str(message.channel.id)
@@ -129,6 +157,7 @@ class MakerBot(discord.Client):
 
 def main():
     client = MakerBot()
+    logger.debug(f"Starting: {__name__}")
     client.run(TOKEN)
 
 

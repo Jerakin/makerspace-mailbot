@@ -17,6 +17,9 @@ ONE_DOT_COM_PASSWORD = os.getenv('ONE_DOT_COM_PASSWORD')
 
 
 def login():
+    if not ONE_DOT_COM_PASSWORD or not ONE_DOT_COM_USER:
+        return
+
     # create an IMAP4 class with SSL
     imap = imaplib.IMAP4_SSL("imap.one.com")
     # authenticate
