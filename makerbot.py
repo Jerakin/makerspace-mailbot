@@ -46,6 +46,7 @@ class MakerBot(discord.Client):
 
         self.GMAIL_DATA = gmail.Data()
 
+        self.mod_mail_alert.start()
         self.cancelled_sessions_job.start()
 
     async def on_error(self, event_method, *args, **kwargs):
@@ -116,7 +117,7 @@ class MakerBot(discord.Client):
             self.SESSION['discord'][scope]['last_request'] = int(time.time())
         return sent
 
-    @slash_command()
+    @slash_command(guild_ids=[770280950155575298])
     @permissions.has_role("admin")
     async def register(self, ctx: discord.ApplicationContext,
                        feature: Option(str, "What to register for", choices=["Cancellation", "Modmail"]),
