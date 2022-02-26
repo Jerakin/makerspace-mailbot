@@ -20,7 +20,6 @@ except ImportError:
 import logging
 
 logger = logging.getLogger('makerbot')
-logger.setLevel(logging.DEBUG)
 handler = logging.FileHandler(filename='discord.log', encoding='utf-8', mode='w')
 handler.setFormatter(logging.Formatter('%(asctime)s:%(levelname)s:%(name)s: %(message)s'))
 logger.addHandler(handler)
@@ -190,8 +189,12 @@ class MakerBot(discord.Bot):
         return int(time.time()) - (14 * 24 * 60 * 60)
 
 
-logger.debug(f"Starting: {__name__}")
-client = MakerBot(intents=discord.Intents(guilds=True), debug_guilds=[773160029766811669])
+if os.getenv('MAILBOT_DEBUG'):
+    logger.setLevel(logging.DEBUG)
+    client = MakerBot(intents=discord.Intents(guilds=True), debug_guilds=[773160029766811669])
+else:
+    logger.setLevel(logging.WARNING)
+    client = MakerBot(intents=discord.Intents(guilds=True))
 
 
 @client.slash_command(description="Registering a channel for bot messages")
@@ -238,5 +241,5 @@ async def ignore(ctx: discord.ApplicationContext, sender: Option(str, "Sender"))
     logger.debug(f"Ignore: {sender}")
     await ctx.respond(f"Ignore added: {sender}")
 
-
+logger.debug(f"Starting: {__name__}")
 client.run(TOKEN)
