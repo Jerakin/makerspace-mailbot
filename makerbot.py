@@ -28,13 +28,13 @@ logger.addHandler(handler)
 load_dotenv()
 
 TOKEN = os.getenv('DISCORD_TOKEN')
+GUILD_IDS = [int(x) for x in os.getenv('GUILD_IDS', "").split(",")]
 
 
 SCOPE_CANCELLATION = "cancellation"
 SCOPE_MODMAIL = "modmail"
 SERVICE_GMAIL = "gmail"
 SERVICE_ONE = "one"
-
 
 class MakerBot(discord.Bot):
     def __init__(self, *args, **kwargs):
@@ -197,27 +197,30 @@ else:
     client = MakerBot(intents=discord.Intents(guilds=True))
 
 
-@client.slash_command(description="Registering a channel for bot messages")
+@client.slash_command(guild_ids=GUILD_IDS, default_permission=False)
 @permissions.has_role("admin")
 async def register(ctx: discord.ApplicationContext,
                    feature: Option(str, "What to register for", choices=[SCOPE_CANCELLATION, SCOPE_MODMAIL]),
                    value: Option(str, "Register or Unregister", choices=["start", "stop"])):
+    """Registering a channel for bot messages"""
     logger.debug("Invoked Slash command")
     await client.register(ctx, value, feature)
 
 
-@client.slash_command(description="Debug: Resets the last check email check time")
+@client.slash_command(guild_ids=GUILD_IDS, default_permission=False)
 @permissions.has_role("admin")
 async def reset(ctx: discord.ApplicationContext):
+    """Debug: Resets the last check email check time"""
     client.SESSION['discord'][SERVICE_ONE] = 0
     client.SESSION['discord'][SERVICE_GMAIL] = 0
     await client.save_session()
     await ctx.respond("Session Time Reset", ephemeral=True)
 
 
-@client.slash_command(description="Debug: Checks for emails")
+@client.slash_command(guild_ids=GUILD_IDS, default_permission=False)
 @permissions.has_role("admin")
 async def fetch(ctx: discord.ApplicationContext):
+    """Debug: Checks for emails"""
     await client.gmail_sessions_job()
     await client.one_sessions_job()
     await ctx.respond("Checking for new emails", ephemeral=True)
@@ -227,16 +230,18 @@ def is_me(m):
     return m.author == client.user
 
 
-@client.slash_command(description="Clears all bots messages")
+@client.slash_command(guild_ids=GUILD_IDS, default_permission=False)
 @permissions.has_role("admin")
 async def clear(ctx: discord.ApplicationContext):
+    """Clears all bots messages"""
     await ctx.channel.purge(check=is_me)
     await ctx.respond("All messages deleted", ephemeral=True)
 
 
-@client.slash_command(description="Ignores emails from the sender")
+@client.slash_command(guild_ids=GUILD_IDS, default_permission=False)
 @permissions.has_role("admin")
 async def ignore(ctx: discord.ApplicationContext, sender: Option(str, "Sender")):
+    """Ignores emails from the sender"""
     client.ignore_sender(str(ctx.guild_id), sender)
     logger.debug(f"Ignore: {sender}")
     await ctx.respond(f"Ignore added: {sender}")
