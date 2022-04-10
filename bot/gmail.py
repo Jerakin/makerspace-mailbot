@@ -2,48 +2,15 @@ import os
 import base64
 import os.path
 import pickle
-import re
 
 from bs4 import BeautifulSoup
 from googleapiclient.discovery import build
 from google_auth_oauthlib.flow import InstalledAppFlow
 from google.auth.transport.requests import Request
 
+import mail
+
 SCOPES = ['https://www.googleapis.com/auth/gmail.readonly']
-CANCEL_BODY_REGEXP = re.compile('Appointment for (.*) on ([0-9\-]*) at (\d\d:\d\d) has been cancelled')
-BOOK_BODY_REGEXP = re.compile('for (.*) at ([0-9\-]*) (\d\d:\d\d)')
-
-
-class Entry:
-    def __init__(self, msg, messages):
-        self.date = msg['date']
-        self.area = msg['area']
-        self.time = msg['time']
-        self.messages = messages
-
-
-class Data:
-    def __init__(self):
-        self._data = []
-
-    def add(self, entry):
-        self._data.append(entry)
-
-    def __getitem__(self, item):
-        return self._data[item]
-
-    def remove(self, msg):
-        for entry in self._data:
-            if msg in entry.messages:
-                entry.messages.remove(msg)
-
-    def get_mail(self, entry):
-        date = entry["date"]
-        area = entry["area"]
-        time = entry["time"]
-        for x in self._data:
-            if date == x.date and area == x.area and time == x.time:
-                return x.messages
 
 
 def login():
@@ -54,6 +21,9 @@ def login():
     if os.path.exists('token.pickle'):
         with open('token.pickle', 'rb') as token:
             creds = pickle.load(token)
+    else:
+        if not os.path.exists('credentials.json'):
+            return
     # If there are no (valid) credentials available, let the user log in.
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
@@ -102,17 +72,29 @@ def read_email(service, msg_id):
             temp_dict['Subject'] = h['value']
         if h['name'] == "From":
             temp_dict['From'] = h['value']
-    if 'NO-REPLY@simplybook.me' not in temp_dict['From']:
-        return
+
     msg_body = _parse_payload(payload)
-    if 'Confirmation of cancellation' in temp_dict['Subject']:
-        match = CANCEL_BODY_REGEXP.search(msg_body)
+    temp_dict['Body'] = msg_body
+
+    if 'NO-REPLY@simplybook.me' in temp_dict['From']:
+        entry = mail.Booking()
+        match = None
+        if 'Confirmation of cancellation' in temp_dict['Subject']:
+            match = mail.CANCEL_BODY_REGEXP.search(msg_body)
+            entry.type = mail.TYPE_CANCELED
+        elif 'has booked an appointment with' in temp_dict['Subject']:
+            match = mail.BOOK_BODY_REGEXP.search(msg_body)
+            entry.type = mail.TYPE_BOOKED
         if match:
-            return {"area": match.group(1), "date": match.group(2), "time": match.group(3), "type": "cancel"}
-    if 'has booked an appointment with' in temp_dict['Subject']:
-        match = BOOK_BODY_REGEXP.search(msg_body)
-        if match:
-            return {"area": match.group(1), "date": match.group(2), "time": match.group(3), "type": "book"}
+            entry.area = match.group(1)
+            entry.date = match.group(2)
+            entry.time = match.group(3)
+    else:
+        entry = mail.Mail()
+    entry.body = temp_dict['Body']
+    entry.subject = temp_dict['Subject']
+    entry.sender = temp_dict['From']
+    return entry
 
 
 def get_emails(service, last_request):
@@ -127,6 +109,11 @@ def get_emails(service, last_request):
 
 def check_mail(service, last_request):
     for mail in get_emails(service, last_request)[::-1]:
-        data = read_email(service, mail['id'])
-        if data:
-            yield data
+        yield read_email(service, mail['id'])
+
+
+if __name__ == '__main__':
+    import time
+    gmail_session = login()
+    for _mail in check_mail(gmail_session, int(time.time()) - (28 * 24 * 60 * 60)):
+        print(_mail.subject)

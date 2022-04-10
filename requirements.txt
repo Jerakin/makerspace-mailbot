@@ -1,5 +1,5 @@
 python-dotenv
-discord.py
+py-cord == 2.0.0b4
 google-api-python-client
 google-auth-httplib2
 google-auth-oauthlib

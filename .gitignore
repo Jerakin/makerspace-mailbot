@@ -2,3 +2,6 @@
 credentials.json
 token.pickle
 session.json
+discord.log
+__pycache__
+.idea

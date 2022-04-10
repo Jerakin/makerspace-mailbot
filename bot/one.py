@@ -3,11 +3,13 @@ import time
 import re
 import imaplib
 import email
+import email.header
 from email.utils import parsedate_tz, mktime_tz
 
 from dotenv import load_dotenv
 from email_reply_parser import EmailReplyParser
 
+import mail
 
 # Load the environment variables
 load_dotenv()
@@ -17,6 +19,9 @@ ONE_DOT_COM_PASSWORD = os.getenv('ONE_DOT_COM_PASSWORD')
 
 
 def login():
+    if not ONE_DOT_COM_PASSWORD or not ONE_DOT_COM_USER:
+        return
+
     # create an IMAP4 class with SSL
     imap = imaplib.IMAP4_SSL("imap.one.com")
     # authenticate
@@ -47,10 +52,17 @@ def _get_body(msg):
 def _parse_mail(response, last_request):
     msg = email.message_from_bytes(response[1])
     date = msg['Date']
-    subject = msg['Subject']
+    subject = email.header.decode_header(msg['Subject'])
+    if subject and len(subject):
+        decoding = subject[0][1]
+        subject = subject[0][0]
+        if decoding:
+            subject = subject.decode(decoding)
+    sender = msg["From"]
     epoch = mktime_tz(parsedate_tz(date))
     if epoch < last_request:
-        return False, "", ""
+        return
+
     if msg.is_multipart():
         # iterate over email parts
         bodies = []
@@ -75,8 +87,29 @@ def _parse_mail(response, last_request):
 
         # Add divider
         body = body + "\n" + "="*40
-        return True, subject, body
-    return False, "", ""
+
+    if "NO-REPLY@simplybook.me" in sender:
+        entry = mail.Booking()
+        match = None
+
+        if 'Confirmation of cancellation' in subject:
+            match = mail.CANCEL_BODY_REGEXP.search(body)
+            entry.type = mail.TYPE_CANCELED
+        elif 'has booked an appointment with' in subject:
+            match = mail.BOOK_BODY_REGEXP.search(body)
+            entry.type = mail.TYPE_BOOKED
+        if match:
+            entry.area = match.group(1)
+            entry.date = match.group(2)
+            entry.time = match.group(3)
+
+    else:
+        entry = mail.Mail()
+
+    entry.sender = sender
+    entry.body = body
+    entry.subject = subject
+    return entry
 
 
 def format_msg(subject, body):
@@ -92,14 +125,12 @@ def check_mail_for_new(imap, last_request):
         res, msg = imap.fetch(str(i), "(RFC822)")
         for response in msg:
             if isinstance(response, tuple):
-                ok, subject, body = _parse_mail(response, last_request)
-                if ok:
-                    yield format_msg(subject, body)
+                yield _parse_mail(response, last_request)
 
 
 if __name__ == '__main__':
     imap = login()
     for x in check_mail_for_new(imap, time.time() - 2*24*60*60):
-        print(x)
+        print(x.subject)
     imap.close()
     imap.logout()
