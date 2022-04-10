@@ -1,0 +1,17 @@
+[[source]]
+url = 'https://pypi.python.org/simple'
+verify_ssl = true
+name = 'pypi'
+
+[requires]
+python_version = '3.8'
+
+[packages]
+python-dotenv = '~=0.19.2'
+discord.py = '~=1.17.3'
+google-api-python-client = '~=2.43.0'
+google-auth-httplib2= '~=0.1.0'
+google-auth-oauthlib= '~=0.5.1'
+lxml = '~=4.8.0 '
+beautifulsoup4 = '~=4.11.1'
+email_reply_parser = '~=0.5.12'
